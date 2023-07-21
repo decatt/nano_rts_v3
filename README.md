@@ -29,7 +29,7 @@ if __name__ == "__main__":
 ![demo](nano_rts_demo.gif)
 
 ### compare with micorrts
-![dif](dif_with_microrts.gif)
+![dif](dif_with_mocrorts.gif)
 
 
 
