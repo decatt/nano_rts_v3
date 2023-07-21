@@ -26,6 +26,10 @@ if __name__ == "__main__":
         states, rewards, dones, winners = env.one_game_step(action0, action1)
 ```
 ### nanoRTS demo
-![](nano_rts_demo.gif)
+![demo](nano_rts_demo.gif)
+
 ### compare with micorrts
+![dif](dif_with_microrts.gif)
+
+
 
