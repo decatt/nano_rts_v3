@@ -1,5 +1,5 @@
 # NanoRTS
-pure python version [microRTS](https://github.com/Farama-Foundation/MicroRTS.git). Almost the same as [microRTS](https://github.com/Farama-Foundation/MicroRTS.git).
+pure python version [microRTS](https://github.com/Farama-Foundation/MicroRTS.git). 
 ### Exmaple Code
 ```python
 from nanorts.game_env import GameEnv
@@ -29,6 +29,10 @@ if __name__ == "__main__":
 ![demo](nano_rts_demo.gif)
 
 ### compare with micorrts
+Almost the same as [microRTS](https://github.com/Farama-Foundation/MicroRTS.git).
+
+Under the same action sequence: microRTS on the left, nanoRTS on the right
+
 ![dif](dif_with_mocrorts.gif)
 
 
