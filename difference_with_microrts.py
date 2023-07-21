@@ -63,4 +63,6 @@ for step in range(1000):
     action_mask = micro_rts_env.get_action_mask()
     next_obs, reward, done, info = micro_rts_env.step(action_micro_rts)
     if action0.action_type is not None:
-        print(action0.action_type)
+        print(str(action0))
+    if action1.action_type is not None:
+        print(str(action1))
