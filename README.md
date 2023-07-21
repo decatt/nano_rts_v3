@@ -27,3 +27,5 @@ if __name__ == "__main__":
 ```
 ### nanoRTS demo
 ![](nano_rts_demo.gif)
+### compare with micorrts
+
