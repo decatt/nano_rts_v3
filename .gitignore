@@ -1,1 +1,10 @@
 
+ais/__pycache__/nano_rts_ai.cpython-39.pyc
+ais/__pycache__/path_finding.cpython-39.pyc
+nanorts/__pycache__/action.cpython-39.pyc
+nanorts/__pycache__/game_env.cpython-39.pyc
+nanorts/__pycache__/game.cpython-39.pyc
+nanorts/__pycache__/player.cpython-39.pyc
+nanorts/__pycache__/pos.cpython-39.pyc
+nanorts/__pycache__/render.cpython-39.pyc
+nanorts/__pycache__/units.cpython-39.pyc
