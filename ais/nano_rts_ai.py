@@ -21,6 +21,13 @@ class AI:
             return Action(None, None, None, None)
         return random.choice(available_actions)
     
+class RandomAI(AI):
+    def __init__(self, player_id:int):
+        super().__init__(player_id)
+    
+    def get_action(self, game:Game):
+        return self.get_random_action(game)
+    
 class RushAI(AI):
     def __init__(self, player_id:int, melee_unit_type:str, width:int, height:int):
         super().__init__(player_id)

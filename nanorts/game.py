@@ -24,6 +24,38 @@ class Game:
         # load map from xml file
         self.load_map(self.map_path)
         self.game_time = 0
+    
+    #deepcopy
+    def __deepcopy__(self):
+        new_game = Game(self.map_path, self.reward_weight)
+        new_game.unit_types = copy.deepcopy(self.unit_types)
+        new_game.units = copy.deepcopy(self.units)
+        new_game.players = copy.deepcopy(self.players)
+        new_game.building_pos = copy.deepcopy(self.building_pos)
+        new_game.moving_pos = copy.deepcopy(self.moving_pos)
+        new_game.width = self.width
+        new_game.height = self.height
+        new_game.produce_unit_id = self.produce_unit_id
+        new_game.terrain = copy.deepcopy(self.terrain)
+        new_game.game_time = self.game_time
+        return new_game
+    
+    def deepcopy(self):
+        return self.__deepcopy__()
+    
+    def __copy__(self):
+        new_game = Game(self.map_path, self.reward_weight)
+        new_game.unit_types = copy.deepcopy(self.unit_types)
+        new_game.units = copy.deepcopy(self.units)
+        new_game.players = copy.deepcopy(self.players)
+        new_game.building_pos = copy.deepcopy(self.building_pos)
+        new_game.moving_pos = copy.deepcopy(self.moving_pos)
+        new_game.width = self.width
+        new_game.height = self.height
+        new_game.produce_unit_id = self.produce_unit_id
+        new_game.terrain = copy.deepcopy(self.terrain)
+        new_game.game_time = self.game_time
+        return new_game
 
     def load_map(self, path:str)->None:
         tree = ET.parse(path)
@@ -306,6 +338,8 @@ class Game:
     def begin_produce(self, unit_pos:int, target_pos:int, unit_type_name:str) -> None:
         if unit_pos not in list(self.units.keys()):
             return
+        if unit_type_name not in self.units[unit_pos].unit_type.produces:
+            return
         if self.players[self.units[unit_pos].player_id].resource < self.unit_types[unit_type_name].cost:
             return
         self.units[unit_pos].current_action = 'produce'
@@ -531,6 +565,9 @@ class Game:
                     target_pos = next_dir_pos(unit_pos, dir, self.width)
                     for produce_type in unit.unit_type.produces:
                         if self.can_produce(unit_pos, target_pos, produce_type):
+                            # check cost
+                            if self.unit_types[produce_type].cost > self.players[unit.player_id].resource:
+                                continue
                             action = Action(unit_pos, 'produce', target_pos, produce_type)
                             available_actions.append(action)
             if unit.unit_type.canAttack:

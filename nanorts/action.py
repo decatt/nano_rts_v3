@@ -60,6 +60,19 @@ class Action:
             vector[7] = dir[0]+3 + 7*(dir[1]+3)
         return vector
     
+    def action_to_one_hot(self, map_width:int, map_height:int)->ndarray:
+        vector = self.action_to_vector(map_width)
+        res = np.zeros((map_width*map_height+6+4+4+4+4+7+49,))
+        res[int(vector[0])] = 1
+        res[map_width*map_height+int(vector[1])] = 1
+        res[map_width*map_height+6+int(vector[2])] = 1
+        res[map_width*map_height+6+4+int(vector[3])] = 1
+        res[map_width*map_height+6+4+4+int(vector[4])] = 1
+        res[map_width*map_height+6+4+4+4+int(vector[5])] = 1
+        res[map_width*map_height+6+4+4+4+4+int(vector[6])] = 1
+        res[map_width*map_height+6+4+4+4+4+7+int(vector[7])] = 1
+        return res
+    
     def action_to_array(self, map_width:int, height:int)->ndarray:
         array = np.zeros((height*map_width, 7),dtype = np.int64)
         vector = self.action_to_vector(map_width)

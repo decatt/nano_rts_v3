@@ -11,9 +11,9 @@ np.random.seed(seed)
 random.seed(seed)
 
 nano_rts_env = GameEnv(
-    ['maps/10x10/basesWorkers10x10.xml' for _ in range(1)], 
-    {'win': 10, 'harvest': 1, 'return': 1, 'produce': 0.2, 'attack': 1}, 
-    5000
+    map_paths=['maps/10x10/basesWorkers10x10.xml' for _ in range(1)], 
+    reward_wrights={'win': 10, 'harvest': 1, 'return': 1, 'produce': 0.2, 'attack': 1}, 
+    max_steps=5000
     )
 
 micro_rts_env = MicroRTSGridModeVecEnv(
