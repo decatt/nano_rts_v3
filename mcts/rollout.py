@@ -3,7 +3,7 @@ from ais.nano_rts_ai import RushAI
 from nanorts.action import Action
 from nanorts.units import Unit
 
-class Playout:
+class Rollout:
     def __init__(self, game: Game, ai1: RushAI, ai2: RushAI, next_action: Action, max_steps=1000, player_id=0, discount=0.99):
         self.game = game
         self.ai1 = ai1

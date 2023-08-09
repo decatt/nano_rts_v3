@@ -1,4 +1,4 @@
-from mcts.playout import Playout
+from mcts.rollout import Rollout
 from nanorts.game import Game
 from nanorts.action import Action
 
@@ -21,7 +21,7 @@ class MCAI:
         for action in available_actions:
             tot_reward = 0
             for _ in range(self.num_playout):
-                playout = Playout(play_out_game, self.ai1, self.ai2, action, max_steps=self.max_steps, player_id=self.player_id, discount=self.discount)
+                playout = Rollout(play_out_game, self.ai1, self.ai2, action, max_steps=self.max_steps, player_id=self.player_id, discount=self.discount)
                 reward, winner = playout.run()
                 tot_reward += reward
             if tot_reward > max_reward:
