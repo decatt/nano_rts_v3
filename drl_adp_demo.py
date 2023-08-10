@@ -20,13 +20,15 @@ max_clip_range = 4
 ent_coef = 0.01
 vf_coef = 0.5
 max_grad_norm = 0.5
-seed = 1
 num_envs = 16
 num_steps = 512
+anneal_time = 3000
 cuda = True
 device = 'cuda'
+adp_weight = 3
 pae_length = 256
-rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'produce': 0.2,'attack': 1}
+rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
+                   'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
 
 map_path = 'maps\\8x8\\bases8x8.xml'
 map = '16x16'
@@ -70,9 +72,13 @@ class ActorCritic(nn.Module):
                 layer_init(nn.Linear(256, 1), std=1)
             )
         
-    def get_distris(self,states):
+    def get_action_distris(self,states):
         states = states.permute((0, 3, 1, 2))
         action_distris = self.action(self.policy_network(states))
+        """action_distris = torch.split(action_distris, action_space, dim=1)
+        #softmax
+        action_distris = [F.softmax(action_distri, dim=-1) for action_distri in action_distris]
+        action_distris = torch.cat(action_distris, dim=1)"""
         return action_distris
 
     def get_value(self, states):
@@ -81,7 +87,7 @@ class ActorCritic(nn.Module):
         return value
     
     def forward(self, states):
-        distris = self.get_distris(states)
+        distris = self.get_action_distris(states)
         value = self.get_value(states)
         return distris,value
 
@@ -93,7 +99,7 @@ class Agent:
         self.pae_length = pae_length
         self.action_space = action_space
         self.out_comes = deque( maxlen= 1000)
-        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 2000)
+        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000)
         self.obs = self.env.reset()
         self.exps_list = [[] for _ in range(self.num_envs)]
         self.oppenent = RushAI(1,"Light", width, height)
@@ -109,8 +115,8 @@ class Agent:
             action = self.self_ai.get_action(game)
             self_action_bias_mask[i] = action.action_to_one_hot(width, height)
 
-        action_distris = self.net.get_distris(states)
-        action_distris = action_distris + torch.Tensor(self_action_bias_mask)
+        action_distris = self.net.get_action_distris(states)
+        action_distris = action_distris + torch.Tensor(self_action_bias_mask)*adp_weight
 
         distris = torch.split(action_distris, self.action_space, dim=1)
         distris = [MaskedCategorical(dist) for dist in distris]
@@ -131,7 +137,7 @@ class Agent:
         masks = torch.cat((unit_masks, torch.Tensor(action_mask_list)), 1)
         log_probs = torch.stack([dist.log_prob(aciton) for dist,aciton in zip(distris,actions)])
         
-        return actions.T.cpu().numpy(), masks.cpu().numpy(),log_probs.T.cpu().numpy(),self_action_bias_mask
+        return actions.T.cpu().numpy(), masks.cpu().numpy(),log_probs.T.cpu().numpy(),self_action_bias_mask,action_distris.cpu().numpy()
     
     def sample_env(self, check=False):  
         if check:
@@ -139,9 +145,9 @@ class Agent:
            rewards = []
            log_probs = [] 
         while len(self.exps_list[0]) < self.num_steps:
-            self.env.render()
+            #self.env.render()
             unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
-            vector_actions,mask,log_prob,bias_mask=self.get_sample_actions(self.obs, unit_mask)
+            vector_actions,mask,log_prob,bias_mask,action_d=self.get_sample_actions(self.obs, unit_mask)
             actions0 = []
             actions1 = []
             for i in range(self.num_envs):
@@ -183,6 +189,8 @@ class Agent:
             step_record_dict['mean_rewards'] = np.mean(rewards)
             step_record_dict['mean_log_probs'] = np.mean(log_probs)
             step_record_dict['mean_win_rates'] = mean_win_rates
+            step_record_dict['mean_action_d'] = np.mean(np.exp(action_d))
+            step_record_dict['max_action_d'] = np.max(action_d) 
             return train_exps, step_record_dict
         
         return train_exps
@@ -267,8 +275,8 @@ class Calculator:
         return torch.where(advantage>=0,positive,negtive)*ratio
         
     def get_prob_entropy_value(self,states, actions, masks, bias_masks):
-        distris = self.calculate_net.get_distris(states)
-        distris = distris + bias_masks
+        distris = self.calculate_net.get_action_distris(states)
+        distris = distris + bias_masks*adp_weight
         distris = torch.split(distris, action_space, dim=1)
         distris = [MaskedCategorical(dist) for dist in distris]
         values = self.calculate_net.get_value(states)
@@ -341,20 +349,27 @@ class Calculator:
             self.share_optim.step()
     
 if __name__ == "__main__":
-    writer = SummaryWriter()
+    comment = "drl_adp_" + str(adp_weight)+"_anneal_"+str(anneal_time)
+    writer = SummaryWriter(comment=comment)
     net = ActorCritic()
     agent = Agent(net)
     calculator = Calculator(net)
-    MAX_VERSION = 4000
+    MAX_VERSION = 5000
     REPEAT_TIMES = 10
     for version in range(MAX_VERSION):
         samples_list, infos = agent.sample_env(check=True)
         for (key,value) in infos.items():
                 writer.add_scalar(key,value,version)
 
-        print("version:",version,"reward:",infos["mean_rewards"])
+        print("version:",version,"reward:",infos["mean_rewards"],"adp_weight:",adp_weight)
 
         calculator.begin_batch_train(samples_list)
         for _ in range(REPEAT_TIMES):
             calculator.generate_grads()
         calculator.end_batch_train()
+
+        if version % 1000 == 0:
+            torch.save(net.state_dict(), "models\\drl_adp_demo\\model_"+str(version)+".pth")
+            torch.save(net, "models\\drl_adp_demo\\model_"+str(version)+".pkl")
+        
+        #adp_weight = max(0.0, adp_weight - 1.0/anneal_time)
