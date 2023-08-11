@@ -8,8 +8,6 @@ from collections import deque
 import numpy as np
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-import argparse
-
 from utils import layer_init, calculate_gae, MaskedCategorical
 
 lr = 2.5e-4
@@ -21,12 +19,13 @@ ent_coef = 0.01
 vf_coef = 0.5
 max_grad_norm = 0.5
 seed = 1
-num_envs = 16
+num_envs = 32
 num_steps = 512
 cuda = True
 device = 'cuda'
 pae_length = 256
-rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'produce': 0.2,'attack': 1}
+rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
+                   'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
 
 map_path = 'maps\\8x8\\bases8x8.xml'
 map = '16x16'
@@ -35,6 +34,11 @@ if map == '8x8':
     height = 8
     cnn_output_size = 32*2*2
     map_path = 'maps\\8x8\\bases8x8.xml'
+if map == '10x10':
+    width = 10
+    height = 10
+    cnn_output_size = 32*3*3
+    map_path = 'maps\\10x10\\basesWorkers10x10.xml'
 if map == '16x16':
     width = 16
     height = 16
@@ -108,8 +112,8 @@ class Agent:
         self.num_steps = num_steps
         self.pae_length = pae_length
         self.action_space = action_space
-        self.out_comes = deque( maxlen= 1000)
-        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 2000)
+        self.out_comes = deque(maxlen= 1000)
+        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000,if_render=False)
         self.obs = self.env.reset()
         self.exps_list = [[] for _ in range(self.num_envs)]
         self.oppenent = RushAI(1,"Light", width, height)
@@ -143,7 +147,7 @@ class Agent:
            rewards = []
            log_probs = [] 
         while len(self.exps_list[0]) < self.num_steps:
-            self.env.render()
+            #self.env.render()
             unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
             vector_actions,mask,log_prob=self.get_sample_actions(self.obs, unit_mask)
             actions0 = []
@@ -336,20 +340,25 @@ class Calculator:
             self.share_optim.step()
     
 if __name__ == "__main__":
-    writer = SummaryWriter()
-    net = ActorCritic()
-    agent = Agent(net)
-    calculator = Calculator(net)
-    MAX_VERSION = 4000
-    REPEAT_TIMES = 10
-    for version in range(MAX_VERSION):
-        samples_list, infos = agent.sample_env(check=True)
-        for (key,value) in infos.items():
-                writer.add_scalar(key,value,version)
+    for i in range(10):
+        commet = "test"+str(i)
+        writer = SummaryWriter(comment=commet)
+        net = ActorCritic()
+        agent = Agent(net)
+        calculator = Calculator(net)
+        MAX_VERSION = 5000
+        REPEAT_TIMES = 10
+        for version in range(MAX_VERSION):
+            samples_list, infos = agent.sample_env(check=True)
+            for (key,value) in infos.items():
+                    writer.add_scalar(key,value,version)
 
-        print("version:",version,"reward:",infos["mean_rewards"])
+            print("version:",version,"reward:",infos["mean_rewards"])
 
-        calculator.begin_batch_train(samples_list)
-        for _ in range(REPEAT_TIMES):
-            calculator.generate_grads()
-        calculator.end_batch_train()
+            calculator.begin_batch_train(samples_list)
+            for _ in range(REPEAT_TIMES):
+                calculator.generate_grads()
+            calculator.end_batch_train()
+            if (version+1) % 500 == 0:
+                torch.save(net.state_dict(), "models\\demo\\model"+str(version)+".pth")
+                torch.save(net, "models\\demo\\model"+str(version)+".pkl")
