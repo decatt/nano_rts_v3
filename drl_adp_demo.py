@@ -25,7 +25,7 @@ num_steps = 512
 anneal_time = 3000
 cuda = True
 device = 'cuda'
-adp_weight = 3
+adp_weight = 40
 pae_length = 256
 rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
                    'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
@@ -116,9 +116,9 @@ class Agent:
             self_action_bias_mask[i] = action.action_to_one_hot(width, height)
 
         action_distris = self.net.get_action_distris(states)
-        action_distris = action_distris + torch.Tensor(self_action_bias_mask)*adp_weight
+        action_adp_distris = action_distris + torch.Tensor(self_action_bias_mask)*adp_weight
 
-        distris = torch.split(action_distris, self.action_space, dim=1)
+        distris = torch.split(action_adp_distris, self.action_space, dim=1)
         distris = [MaskedCategorical(dist) for dist in distris]
         
         unit_masks = torch.Tensor(unit_masks)
@@ -189,8 +189,9 @@ class Agent:
             step_record_dict['mean_rewards'] = np.mean(rewards)
             step_record_dict['mean_log_probs'] = np.mean(log_probs)
             step_record_dict['mean_win_rates'] = mean_win_rates
-            step_record_dict['mean_action_d'] = np.mean(np.exp(action_d))
-            step_record_dict['max_action_d'] = np.max(action_d) 
+            step_record_dict['mean_action_d'] = np.mean(action_d)
+            step_record_dict['max_action_d'] = np.max(action_d)
+            step_record_dict['std_action_d'] = np.std(action_d)
             return train_exps, step_record_dict
         
         return train_exps
