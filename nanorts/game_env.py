@@ -4,6 +4,7 @@ from nanorts.action import Action
 from ais.nano_rts_ai import AI, RushAI
 import numpy as np
 from nanorts.render import Render
+import torch
 
 class GameEnv:
     def __init__(self, map_paths, reward_wrights, max_steps, skip_frames=5, if_render=True):
@@ -172,3 +173,14 @@ class GameEnv:
             action_mask = game.get_vector_action_mask(units[i], player_id)
             action_masks.append(action_mask)
         return np.array(action_masks)
+    
+    def get_mix_states(self, unit_pos_list:list[int], n_units:int, paddind:int):
+        n_games = len(self.games)
+        res_cnn_states = torch.zeros((n_games, 2*paddind+1, 2*paddind+1, 27))
+        res_linear_states = torch.zeros((n_games, n_units, 29))
+        for i in range(len(self.games)):
+            unit_pos = unit_pos_list[i]
+            linear_state, cnn_state = self.games[i].get_mix_state(unit_pos, n_units, paddind)
+            res_cnn_states[i] = torch.Tensor(cnn_state)
+            res_linear_states[i] = torch.Tensor(linear_state)
+        return res_linear_states, res_cnn_states

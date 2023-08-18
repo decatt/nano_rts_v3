@@ -8,6 +8,8 @@ from collections import deque
 import numpy as np
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
+import argparse
+
 from utils import layer_init, calculate_gae, MaskedCategorical
 
 lr = 2.5e-4
@@ -19,13 +21,16 @@ ent_coef = 0.01
 vf_coef = 0.5
 max_grad_norm = 0.5
 seed = 1
-num_envs = 32
+num_envs = 16
 num_steps = 512
 cuda = True
 device = 'cuda'
 pae_length = 256
 rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
                    'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
+
+padding = 3
+n_unit = 16
 
 map_path = 'maps\\8x8\\bases8x8.xml'
 map = '16x16'
@@ -34,11 +39,6 @@ if map == '8x8':
     height = 8
     cnn_output_size = 32*2*2
     map_path = 'maps\\8x8\\bases8x8.xml'
-if map == '10x10':
-    width = 10
-    height = 10
-    cnn_output_size = 32*3*3
-    map_path = 'maps\\10x10\\basesWorkers10x10.xml'
 if map == '16x16':
     width = 16
     height = 16
@@ -51,17 +51,19 @@ observation_space = [height,width,27]
 class ActorCritic(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.policy_network = nn.Sequential(
+        self.encoder_cnn = nn.Sequential(
             layer_init(nn.Conv2d(27, 16, kernel_size=(3, 3), stride=(2, 2))),
             nn.ReLU(),
             layer_init(nn.Conv2d(16, 32, kernel_size=(2, 2))),
             nn.ReLU(),
             nn.Flatten(),
-            layer_init(nn.Linear(cnn_output_size, 256)),
+            layer_init(nn.Linear(32*2*2, 128)),
             nn.ReLU(),
         )
 
-        self.policy_unit = layer_init(nn.Linear(256, width*height), std=0.01)
+        self.encoder = nn.GRU(29, 128, batch_first=True)
+        self.decoder = nn.GRU(128, 128, batch_first=True)
+
         self.policy_type = layer_init(nn.Linear(256, 6), std=0.01)
         self.policy_move = layer_init(nn.Linear(256, 4), std=0.01)
         self.policy_harvest = layer_init(nn.Linear(256, 4), std=0.01)
@@ -70,21 +72,32 @@ class ActorCritic(nn.Module):
         self.policy_produce_type = layer_init(nn.Linear(256, 7), std=0.01)
         self.policy_attack = layer_init(nn.Linear(256, 49), std=0.01)
         
-        self.value = nn.Sequential(
-                layer_init(nn.Conv2d(27, 16, kernel_size=(3, 3), stride=(2, 2))),
-                nn.ReLU(),
-                layer_init(nn.Conv2d(16, 32, kernel_size=(2, 2))),
-                nn.ReLU(),
-                nn.Flatten(),
-                layer_init(nn.Linear(cnn_output_size, 256)),
-                nn.ReLU(), 
-                layer_init(nn.Linear(256, 1), std=1)
-            )
+        self.value = layer_init(nn.Linear(256, 1), std=1)
         
-    def get_distris(self,states):
-        states = states.permute((0, 3, 1, 2))
-        policy_network = self.policy_network(states)
-        unit_distris = MaskedCategorical(self.policy_unit(policy_network))
+    def forward(self,cnn_states,linears_states):
+        cnn_states = cnn_states.permute((0, 3, 1, 2))
+        z_cnn = self.encoder_cnn(cnn_states)
+
+        batch_size = linears_states.size(0)
+        seq_len = linears_states.size(1)
+
+        # Encoder
+        encoder_outputs, hidden = self.encoder(linears_states)
+
+        # Decoder
+        decoder_state = hidden
+        decoder_input = torch.zeros((batch_size, 1, 128)).to(linears_states.device)
+        decoder_outputs = []
+
+        for t in range(seq_len):
+            decoder_output, decoder_state = self.decoder(decoder_input, decoder_state)
+            decoder_outputs.append(decoder_output)
+            decoder_input = decoder_output
+
+        z_pn = decoder_outputs[-1][:,-1,:]
+
+        policy_network = torch.cat((z_cnn,z_pn),dim=1)
+
         type_distris = MaskedCategorical(self.policy_type(policy_network))
         move_distris = MaskedCategorical(self.policy_move(policy_network))
         harvest_distris = MaskedCategorical(self.policy_harvest(policy_network))
@@ -93,17 +106,9 @@ class ActorCritic(nn.Module):
         produce_type_distris = MaskedCategorical(self.policy_produce_type(policy_network))
         attack_distris = MaskedCategorical(self.policy_attack(policy_network))
 
-        return [unit_distris,type_distris,move_distris,harvest_distris,return_distris,produce_distris,produce_type_distris,attack_distris]
+        value = self.value(policy_network)
 
-    def get_value(self, states):
-        states = states.permute((0, 3, 1, 2))
-        value = self.value(states)
-        return value
-    
-    def forward(self, states):
-        distris = self.get_distris(states)
-        value = self.get_value(states)
-        return distris,value
+        return [type_distris,move_distris,harvest_distris,return_distris,produce_distris,produce_type_distris,attack_distris],value
 
 class Agent:
     def __init__(self,net:ActorCritic) -> None:
@@ -112,32 +117,27 @@ class Agent:
         self.num_steps = num_steps
         self.pae_length = pae_length
         self.action_space = action_space
-        self.out_comes = deque(maxlen= 1000)
-        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000,if_render=False)
+        self.out_comes = deque( maxlen= 1000)
+        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000)
         self.obs = self.env.reset()
         self.exps_list = [[] for _ in range(self.num_envs)]
         self.oppenent = RushAI(1,"Light", width, height)
     
     @torch.no_grad()
-    def get_sample_actions(self,states, unit_masks):
-        states = torch.Tensor(states)
-        distris = self.net.get_distris(states)
+    def get_sample_actions(self,cnn_states, linear_states, units_pos_list):
+        distris,_ = self.net(cnn_states, linear_states)
         
-        unit_masks = torch.Tensor(unit_masks)
-        distris[0].update_masks(unit_masks)
-        
-        units = distris[0].sample()
-        action_components = [units]
+        action_components = [torch.Tensor(units_pos_list)]
 
-        action_mask_list = self.env.get_action_masks(units.tolist())
+        action_mask_list = self.env.get_action_masks(units_pos_list)
 
         action_masks = torch.split(torch.Tensor(action_mask_list), self.action_space[1:], dim=1) 
         
-        action_components +=  [dist.update_masks(action_mask).sample() for dist , action_mask in zip(distris[1:],action_masks)]
+        action_components +=  [dist.update_masks(action_mask).sample() for dist , action_mask in zip(distris,action_masks)]
             
         actions = torch.stack(action_components)
-        masks = torch.cat((unit_masks, torch.Tensor(action_mask_list)), 1)
-        log_probs = torch.stack([dist.log_prob(aciton) for dist,aciton in zip(distris,actions)])
+        masks = torch.Tensor(action_mask_list)
+        log_probs = torch.stack([dist.log_prob(aciton) for dist,aciton in zip(distris,actions[1:])])
         
         return actions.T.cpu().numpy(), masks.cpu().numpy(),log_probs.T.cpu().numpy()
     
@@ -147,9 +147,19 @@ class Agent:
            rewards = []
            log_probs = [] 
         while len(self.exps_list[0]) < self.num_steps:
-            #self.env.render()
+            self.env.render()
             unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
-            vector_actions,mask,log_prob=self.get_sample_actions(self.obs, unit_mask)
+
+            units_pos_list = []
+            for unit_mask in unit_mask:
+                if np.sum(unit_mask) == 0:
+                    units_pos_list.append(-1)
+                else:
+                    units_pos_list.append(np.random.choice(np.where(unit_mask == 1)[0]))
+            
+            linear_states, cnn_states = self.env.get_mix_states(units_pos_list,n_unit,padding)
+
+            vector_actions,mask,log_prob=self.get_sample_actions(cnn_states, linear_states, units_pos_list)
             actions0 = []
             actions1 = []
             for i in range(self.num_envs):
@@ -170,7 +180,7 @@ class Agent:
                     done = True
                 else:
                     done = False
-                self.exps_list[i].append([self.obs[i],vector_actions[i],rs[i][0],mask[i],done,log_prob[i]])
+                self.exps_list[i].append([cnn_states[i],linear_states[i],vector_actions[i],rs[i][0],mask[i],done,log_prob[i]])
                 if check:
                     if done_n[i]:
                         if infos[i] == 0:
@@ -209,7 +219,9 @@ class Calculator:
         self.calculate_net = ActorCritic()
         self.calculate_net.to(self.device)
         self.share_optim = torch.optim.Adam(params=self.net.parameters(), lr=lr)
-        self.states_list = None
+
+        self.cnn_states_list = None
+        self.linear_states_list = None
         self.actions_list = None
         self.rewards_list = None
         self.dones_list = None
@@ -217,22 +229,25 @@ class Calculator:
         self.marks_list = None
 
     def begin_batch_train(self, samples_list: list):    
-        s_states = [np.array([s[0] for s in samples]) for samples in samples_list]
-        s_actions = [np.array([s[1] for s in samples]) for samples in samples_list]
-        s_masks = [np.array([s[3] for s in samples]) for samples in samples_list]
-        s_log_probs = [np.array([s[5] for s in samples]) for samples in samples_list]
+        s_cnn_states = [np.array([np.array(s[0]) for s in samples]) for samples in samples_list]
+        s_linear_states = [np.array([np.array(s[1]) for s in samples]) for samples in samples_list]
+        s_actions = [np.array([s[2] for s in samples]) for samples in samples_list]
+        s_masks = [np.array([s[4] for s in samples]) for samples in samples_list]
+        s_log_probs = [np.array([s[6] for s in samples]) for samples in samples_list]
         
-        s_rewards = [np.array([s[2] for s in samples]) for samples in samples_list]
-        s_dones = [np.array([s[4] for s in samples]) for samples in samples_list]
+        s_rewards = [np.array([s[3] for s in samples]) for samples in samples_list]
+        s_dones = [np.array([s[5] for s in samples]) for samples in samples_list]
         
-        self.states = [torch.Tensor(states).to(self.device) for states in s_states]
+        self.cnn_states = [torch.Tensor(states).to(self.device) for states in s_cnn_states]
+        self.linear_states = [torch.Tensor(states).to(self.device) for states in s_linear_states]
         self.actions = [torch.Tensor(actions).to(self.device) for actions in s_actions]
         self.old_log_probs = [torch.Tensor(log_probs).to(self.device) for log_probs in s_log_probs]
         self.marks = [torch.Tensor(marks).to(self.device) for marks in s_masks]
         self.rewards = s_rewards
         self.dones = s_dones
         
-        self.states_list = torch.cat([states[0:self.pae_length] for states in self.states])
+        self.cnn_states_list = torch.cat([states[0:self.pae_length] for states in self.cnn_states])
+        self.linear_states_list = torch.cat([states[0:self.pae_length] for states in self.linear_states])
         self.actions_list = torch.cat([actions[0:self.pae_length] for actions in self.actions])
         self.old_log_probs_list = torch.cat([old_log_probs[0:self.pae_length] for old_log_probs in self.old_log_probs])
         self.marks_list = torch.cat([marks[0:self.pae_length] for marks in self.marks])
@@ -241,9 +256,9 @@ class Calculator:
         np_advantages = []
         np_returns = []
         
-        for states,rewards,dones in zip(self.states,self.rewards,self.dones):
+        for cnn_states,linear_states,rewards,dones in zip(self.cnn_states,self.linear_states,self.rewards,self.dones):
             with torch.no_grad():
-                values = self.calculate_net.get_value(states)
+                _,values = self.calculate_net(cnn_states,linear_states)
                             
             advantages,returns = calculate_gae(values.cpu().numpy().reshape(-1),rewards,dones,gamma,gae_lambda)
             np_advantages.extend(advantages[0:self.pae_length])
@@ -255,7 +270,8 @@ class Calculator:
         return np_advantages, np_returns
         
     def end_batch_train(self):
-        self.states_list = None
+        self.cnn_states_list = None
+        self.linear_states_list = None
         self.actions_list = None
         self.rewards_list = None
         self.dones_list = None
@@ -269,12 +285,11 @@ class Calculator:
         negtive = torch.where(ratio <= 1.0 - clip_coef,0 * advantage,torch.where(ratio >= max_clip_coef, 0 * advantage,advantage))
         return torch.where(advantage>=0,positive,negtive)*ratio
         
-    def get_prob_entropy_value(self,states, actions, masks):
-        distris = self.calculate_net.get_distris(states)
-        values = self.calculate_net.get_value(states)
-        action_masks = torch.split(masks, action_space, dim=1)
+    def get_prob_entropy_value(self, cnn_states, linear_states, actions, masks):
+        distris,values = self.calculate_net(cnn_states, linear_states)
+        action_masks = torch.split(masks, action_space[1:], dim=1)
         distris = [dist.update_masks(mask,device=self.device) for dist,mask in zip(distris,action_masks)]
-        log_probs = torch.stack([dist.log_prob(action) for dist,action in zip(distris,actions)])
+        log_probs = torch.stack([dist.log_prob(action) for dist,action in zip(distris,actions[1:])])
         entropys = torch.stack([dist.entropy() for dist in distris])
         return log_probs.T, entropys.T, values
 
@@ -297,14 +312,15 @@ class Calculator:
             start_index = i*mini_batch_size
             end_index = (i+1)* mini_batch_size
             
-            mini_states = self.states_list[start_index:end_index]
+            mini_cnn_states = self.cnn_states_list[start_index:end_index]
+            mini_linear_states = self.linear_states_list[start_index:end_index]
             mini_actions = self.actions_list[start_index:end_index]
             mini_masks = self.marks_list[start_index:end_index]
             mini_old_log_probs = self.old_log_probs_list[start_index:end_index]
             
             self.calculate_net.load_state_dict(self.net.state_dict())
                 
-            mini_new_log_probs,mini_entropys,mini_new_values = self.get_prob_entropy_value(mini_states,mini_actions.T,mini_masks)
+            mini_new_log_probs,mini_entropys,mini_new_values = self.get_prob_entropy_value(mini_cnn_states,mini_linear_states,mini_actions.T,mini_masks)
                         
             mini_advantage = advantage_list[start_index:end_index]
             mini_returns = returns_list[start_index:end_index]
@@ -340,25 +356,24 @@ class Calculator:
             self.share_optim.step()
     
 if __name__ == "__main__":
-    for i in range(10):
-        commet = "test"+str(i)
-        writer = SummaryWriter(comment=commet)
-        net = ActorCritic()
-        agent = Agent(net)
-        calculator = Calculator(net)
-        MAX_VERSION = 5000
-        REPEAT_TIMES = 10
-        for version in range(MAX_VERSION):
-            samples_list, infos = agent.sample_env(check=True)
-            for (key,value) in infos.items():
-                    writer.add_scalar(key,value,version)
+    writer = SummaryWriter()
+    net = ActorCritic()
+    agent = Agent(net)
+    calculator = Calculator(net)
+    MAX_VERSION = 100000
+    REPEAT_TIMES = 10
+    for version in range(MAX_VERSION):
+        samples_list, infos = agent.sample_env(check=True)
+        for (key,value) in infos.items():
+                writer.add_scalar(key,value,version)
 
-            print("version:",version,"reward:",infos["mean_rewards"])
+        print("version:",version,"reward:",infos["mean_rewards"])
 
-            calculator.begin_batch_train(samples_list)
-            for _ in range(REPEAT_TIMES):
-                calculator.generate_grads()
-            calculator.end_batch_train()
-            if (version+1) % 500 == 0:
-                torch.save(net.state_dict(), "models\\demo\\model"+str(version)+".pth")
-                torch.save(net, "models\\demo\\model"+str(version)+".pkl")
+        calculator.begin_batch_train(samples_list)
+        for _ in range(REPEAT_TIMES):
+            calculator.generate_grads()
+        calculator.end_batch_train()
+
+        if version % 1000 == 0:
+            torch.save(net.state_dict(), 'models\\mix_state\\'+str(version)+'.pth')
+            torch.save(net, 'models\\mix_state\\'+str(version)+'.pkl')

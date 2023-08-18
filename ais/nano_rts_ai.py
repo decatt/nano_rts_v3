@@ -20,6 +20,16 @@ class AI:
         if len(available_actions) == 0:
             return Action(None, None, None, None)
         return random.choice(available_actions)
+
+class RandomAI(AI):
+    def __init__(self, player_id:int):
+        super().__init__(player_id)
+    
+    def get_action(self, game:Game):
+        available_actions = game.get_player_available_actions(self.player_id)
+        if len(available_actions) == 0:
+            return Action(None, None, None, None)
+        return random.choice(available_actions)
     
 class RushAI(AI):
     def __init__(self, player_id:int, melee_unit_type:str, width:int, height:int):

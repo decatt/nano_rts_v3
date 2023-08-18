@@ -20,12 +20,14 @@ vf_coef = 0.5
 max_grad_norm = 0.5
 seed = 1
 num_envs = 32
-num_steps = 512
+num_steps = 1024
 cuda = True
 device = 'cuda'
 pae_length = 256
-rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
-                   'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
+rewards_wrights = {'win': 100,'harvest': 0,'return': 0,'attack': 1, 'produce_worker': 0, 
+                   'produce_light': 0, 'produce_heavy': 0, 'produce_ranged': 0, 'produce_base': 0, 'produce_barracks': 0}
+
+demonstrator_weight = 0.9
 
 map_path = 'maps\\8x8\\bases8x8.xml'
 map = '16x16'
@@ -113,10 +115,11 @@ class Agent:
         self.pae_length = pae_length
         self.action_space = action_space
         self.out_comes = deque(maxlen= 1000)
-        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000,if_render=False)
+        self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000,if_render=True)
         self.obs = self.env.reset()
         self.exps_list = [[] for _ in range(self.num_envs)]
         self.oppenent = RushAI(1,"Light", width, height)
+        self.demonstrator = RushAI(0,"Light", width, height)
     
     @torch.no_grad()
     def get_sample_actions(self,states, unit_masks):
@@ -147,7 +150,7 @@ class Agent:
            rewards = []
            log_probs = [] 
         while len(self.exps_list[0]) < self.num_steps:
-            #self.env.render()
+            self.env.render()
             unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
             vector_actions,mask,log_prob=self.get_sample_actions(self.obs, unit_mask)
             actions0 = []
@@ -156,7 +159,11 @@ class Agent:
                 game:Game = self.env.games[i]
                 vector_action = vector_actions[i]
                 oppe_action = self.oppenent.get_action(self.env.games[i])
-                action = game.vector_to_action(vector_action)
+                if demonstrator_weight > np.random.rand():
+                    action = self.demonstrator.get_action(game)
+                    vector_action = action.action_to_vector(width)
+                else:
+                    action = game.vector_to_action(vector_action)
                 actions0.append(action)
                 actions1.append(oppe_action)
             next_obs, rs, done_n, infos = self.env.step(actions0, actions1)
@@ -268,6 +275,9 @@ class Calculator:
         positive = torch.where(ratio >= 1.0 + clip_coef, 0 * advantage,advantage)
         negtive = torch.where(ratio <= 1.0 - clip_coef,0 * advantage,torch.where(ratio >= max_clip_coef, 0 * advantage,advantage))
         return torch.where(advantage>=0,positive,negtive)*ratio
+
+        # don't clip
+        #return advantage*ratio
         
     def get_prob_entropy_value(self,states, actions, masks):
         distris = self.calculate_net.get_distris(states)
@@ -362,3 +372,5 @@ if __name__ == "__main__":
             if (version+1) % 500 == 0:
                 torch.save(net.state_dict(), "models\\demo\\model"+str(version)+".pth")
                 torch.save(net, "models\\demo\\model"+str(version)+".pkl")
+
+            demonstrator_weight = max(0, demonstrator_weight - 0.9/1000)

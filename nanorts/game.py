@@ -279,6 +279,8 @@ class Game:
         return True
 
     def begin_move(self, unit_pos:int, target_pos:int) -> None:
+        if not self.can_move(unit_pos, target_pos):
+            return
         if unit_pos not in list(self.units.keys()):
             return
         if target_pos < 0 or target_pos >= self.width*self.height:
@@ -290,6 +292,8 @@ class Game:
         self.units[unit_pos].execute_current_action_time = self.units[unit_pos].unit_type.moveTime
 
     def begin_harvest(self, unit_pos:int, target_pos:int) -> None:
+        if not self.can_harvest(unit_pos, target_pos):
+            return
         if unit_pos not in list(self.units.keys()):
             return
         self.units[unit_pos].current_action = 'harvest'
@@ -297,6 +301,8 @@ class Game:
         self.units[unit_pos].execute_current_action_time = self.units[unit_pos].unit_type.harvestTime
 
     def begin_return(self, unit_pos:int, target_pos:int) -> None:
+        if not self.can_return(unit_pos, target_pos):
+            return
         if unit_pos not in list(self.units.keys()):
             return
         self.units[unit_pos].current_action = 'return'
@@ -304,6 +310,8 @@ class Game:
         self.units[unit_pos].execute_current_action_time = self.units[unit_pos].unit_type.returnTime
 
     def begin_produce(self, unit_pos:int, target_pos:int, unit_type_name:str) -> None:
+        if not self.can_produce(unit_pos, target_pos, unit_type_name):
+            return
         if unit_pos not in list(self.units.keys()):
             return
         if self.players[self.units[unit_pos].player_id].resource < self.unit_types[unit_type_name].cost:
@@ -315,6 +323,8 @@ class Game:
         self.players[self.units[unit_pos].player_id].resource -= self.units[unit_pos].building_unit_type.cost
 
     def begin_attack(self, unit_pos:int, target_pos:int) -> None:
+        if not self.can_attack(unit_pos, target_pos):
+            return
         if unit_pos not in list(self.units.keys()):
             return
         if target_pos < 0 or target_pos >= self.width*self.height:
@@ -437,10 +447,37 @@ class Game:
         self.produce_unit_id += 1
         
         self.stop_unit_action(unit_pos)
+        prodeced_unit_name = prodeced_unit.unit_type.name
         if self.units[unit_pos].player_id == 0:
-            return (self.reward_weight['produce'],0)
+            if prodeced_unit_name == 'Worker':
+                return (self.reward_weight['produce_worker'],0)
+            elif prodeced_unit_name == 'Light':
+                return (self.reward_weight['produce_light'],0)
+            elif prodeced_unit_name == 'Heavy':
+                return (self.reward_weight['produce_heavy'],0)
+            elif prodeced_unit_name == 'Ranged':
+                return (self.reward_weight['produce_ranged'],0)
+            elif prodeced_unit_name == 'Barracks':
+                return (self.reward_weight['produce_barracks'],0)
+            elif prodeced_unit_name == 'Base':
+                return (self.reward_weight['produce_base'],0)
+            else:
+                return (0,0)
         else:
-            return (0,self.reward_weight['produce'])
+            if prodeced_unit_name == 'Worker':
+                return (0,self.reward_weight['produce_worker'])
+            elif prodeced_unit_name == 'Light':
+                return (0,self.reward_weight['produce_light'])
+            elif prodeced_unit_name == 'Heavy':
+                return (0,self.reward_weight['produce_heavy'])
+            elif prodeced_unit_name == 'Ranged':
+                return (0,self.reward_weight['produce_ranged'])
+            elif prodeced_unit_name == 'Barracks':
+                return (0,self.reward_weight['produce_barracks'])
+            elif prodeced_unit_name == 'Base':
+                return (0,self.reward_weight['produce_base'])
+            else:
+                return (0,0)
 
     def execute_attack_unit(self, unit_pos:int):
         if unit_pos not in list(self.units.keys()):
@@ -654,7 +691,10 @@ class Game:
     #5 produce: up, right, down, left
     #6 produce_type: resource, base, barracks, worker, light, heavy, ranged
     #7 attack_pos: 1~7*7
-    def vector_to_action(self, vector):
+    def vector_to_action(self, vector:np.ndarray):
+        if vector.dtype != np.int32:
+            vector = vector.astype(np.int32)
+
         unit_pos = vector[0]
         next_pos = [unit_pos-self.width, unit_pos+1, unit_pos+self.width, unit_pos-1]
         dir = None
@@ -698,6 +738,35 @@ class Game:
             unit_pos_y = unit_pos // self.width
             target_pos = (unit_pos_x + atk_x) + (unit_pos_y + atk_y) * self.width
         return Action(unit_pos, unit_action_type, target_pos, produce_type)
+    
+
+    def get_mix_state(self, center_unit_pos:int, n_units:int, padding:int)->np.ndarray:
+        res_v = np.ones((n_units,29))*-1.0
+        res_c = np.zeros((2*padding+1, 2*padding+1, 27))
+        center_unit_pos_x = center_unit_pos % self.width
+        center_unit_pos_y = center_unit_pos // self.width
+        if center_unit_pos not in list(self.units.keys()):
+            return res_v, res_c
+        unit_vectors = []
+        for unit_pos in list(self.units.keys()):
+            unit:Unit = self.units[unit_pos]
+            unit_pos_x = unit_pos % self.width
+            unit_pos_y = unit_pos // self.width
+            unit_vector = self.unit_to_vector(unit)
+            d_x = abs(unit_pos_x - center_unit_pos_x)
+            d_y = abs(unit_pos_y - center_unit_pos_y)
+            if d_x <= padding and d_y <= padding:
+                res_c[center_unit_pos_y-unit_pos_y+padding][center_unit_pos_x-unit_pos_x+padding] = unit_vector
+                d = d_x + d_y
+                ulv = np.zeros(29)
+                ulv[0] = unit_pos_x
+                ulv[1] = unit_pos_y
+                ulv[2:29] = unit_vector
+                unit_vectors.append((d, ulv))
+        unit_vectors.sort(key=lambda x:x[0])
+        for i in range(min(n_units, len(unit_vectors))):
+            res_v[i] = unit_vectors[i][1]
+        return res_v, res_c
 
 
 
