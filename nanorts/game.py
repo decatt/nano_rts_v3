@@ -739,7 +739,6 @@ class Game:
             target_pos = (unit_pos_x + atk_x) + (unit_pos_y + atk_y) * self.width
         return Action(unit_pos, unit_action_type, target_pos, produce_type)
     
-
     def get_mix_state(self, center_unit_pos:int, n_units:int, padding:int)->np.ndarray:
         res_v = np.ones((n_units,29))*-1.0
         res_c = np.zeros((2*padding+1, 2*padding+1, 27))
@@ -767,6 +766,7 @@ class Game:
         for i in range(min(n_units, len(unit_vectors))):
             res_v[i] = unit_vectors[i][1]
         return res_v, res_c
+        
 
 
 

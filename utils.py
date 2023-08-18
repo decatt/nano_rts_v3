@@ -48,6 +48,14 @@ class MaskedCategorical:
         self.dist = Categorical(self.probs)
         return self
     
+    def update_bias_masks(self,masks,device = 'cpu'):
+        if masks is None:
+            return self
+        probs = self.origin_probs + torch.log(masks)
+        self.probs = F.softmax(probs,dim=-1)
+        self.dist = Categorical(self.probs)
+        return self
+    
     def sample(self):
         actions = self.dist.sample()
         return actions

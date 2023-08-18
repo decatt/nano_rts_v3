@@ -38,6 +38,7 @@ class Unit:
         self.carried_resource = resources
         self.building_unit_type = None
         self.width = map_width
+        self.role = None
 
     def busy(self):
         return self.current_action is not None

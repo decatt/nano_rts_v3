@@ -1,7 +1,8 @@
 from nanorts.game_env import GameEnv
-from ais.nano_rts_ai import RushAI, RandomAI
+from ais.nano_rts_ai import RushAI, RandomAI, RoleAI
 from nanorts.render import Render
 from mcts.mc_ai import MCAI
+import time
 
 if __name__ == "__main__":
     rewards_wrights = {'win': 10, 'harvest': 1, 'return': 1, 'produce': 1, 'attack': 1}
@@ -13,16 +14,13 @@ if __name__ == "__main__":
     width = 8
     height = 8
 
-    playou_ai1 = RandomAI(0)
-    playou_ai2 = RandomAI(1)
+    ai0 = RushAI(0, "Light", width, height)
+    ai1 = RoleAI(1, "Light", width, height)
 
-    ai0 = MCAI(playou_ai1, playou_ai2, 0, num_playout = 20)
-
-    ai1 = RandomAI(1)
-
-    r = Render(16,16)
+    r = Render(width, height)
 
     for _ in range(100000):
+        time.sleep(0.01)
         r.draw(env.games[0])
         game = env.games[0]
         # action: Action(unit_pos:int, action_type:str, target_pos:int, produced_unit_type:UnitType=None)
