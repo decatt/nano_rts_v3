@@ -254,6 +254,58 @@ class Agent:
             self.obs=next_obs
         print("mean_rewards:",np.mean(rewards),"mean_win_rates:",np.mean(outcomes))
 
+    @torch.no_grad()
+    def get_action_without_adp(self,states, unit_masks):
+        states = torch.Tensor(states)
+
+        action_distris = self.net.get_action_distris(states)
+
+        distris = torch.split(action_distris, self.action_space, dim=1)
+        distris = [MaskedCategorical(dist) for dist in distris]
+        
+        unit_masks = torch.Tensor(unit_masks)
+        distris[0].update_masks(unit_masks)
+        
+        units = distris[0].argmax()
+        action_components = [units]
+
+        action_mask_list = self.env.get_action_masks(units.tolist())
+
+        action_masks = torch.split(torch.Tensor(action_mask_list), self.action_space[1:], dim=1) 
+        
+        action_components +=  [dist.update_masks(action_mask).argmax() for dist , action_mask in zip(distris[1:],action_masks)]
+            
+        actions = torch.stack(action_components)
+        
+        return actions.T.cpu().numpy()
+    
+    def check_without_adp(self):
+        rewards = []
+        outcomes = []
+        while len(outcomes)<100:
+            unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
+            vector_actions =  self.get_action_without_adp(self.obs, unit_mask)
+            actions0 = []
+            actions1 = []
+            for i in range(self.num_envs):
+                game:Game = self.env.games[i]
+                vector_action = vector_actions[i]
+                oppe_action = self.oppenent.get_action(self.env.games[i])
+                action = game.vector_to_action(vector_action)
+                actions0.append(action)
+                actions1.append(oppe_action)
+            next_obs, rs, done_n, infos = self.env.step(actions0, actions1)
+
+            rewards.append(np.mean([r[0] for r in rs]))
+            for i in range(self.num_envs):
+                if done_n[i]:
+                    if infos[i] == 0:
+                        outcomes.append(1.0)
+                    else:
+                        outcomes.append(0.0)
+            self.obs=next_obs
+        print("mean_rewards:",np.mean(rewards),"mean_win_rates:",np.mean(outcomes))
+
 class Calculator:
     def __init__(self,net:ActorCritic) -> None:
         self.net = net
