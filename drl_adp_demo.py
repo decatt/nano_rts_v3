@@ -1,4 +1,4 @@
-from ais.nano_rts_ai import AI, RushAI
+from ais.nano_rts_ai import AI, RushAI, RushAIPlus
 from nanorts.game import Game
 from nanorts.game_env import GameEnv
 
@@ -12,6 +12,8 @@ import argparse
 
 from utils import layer_init, calculate_gae, MaskedCategorical
 
+adp_weight = 5
+
 lr = 2.5e-4
 gamma = 0.99
 gae_lambda = 0.95
@@ -24,9 +26,9 @@ num_envs = 16
 num_steps = 512
 cuda = True
 device = 'cuda'
-adp_weight = 2
+
 pae_length = 256
-rewards_wrights = {'win': 10,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
+rewards_wrights = {'win': 100,'harvest': 1,'return': 1,'attack': 1, 'produce_worker': 1, 
                    'produce_light': 4, 'produce_heavy': 4, 'produce_ranged': 4, 'produce_base': 0, 'produce_barracks': 0.2}
 
 map_path = 'maps\\8x8\\bases8x8.xml'
@@ -101,9 +103,11 @@ class Agent:
         self.env = GameEnv([map_path for _ in range(self.num_envs)],rewards_wrights,max_steps = 5000)
         self.obs = self.env.reset()
         self.exps_list = [[] for _ in range(self.num_envs)]
+        #self.oppenent = RushAIPlus(1,"Random", width, height)
+        #self.self_ai = RushAIPlus(0,"Random", width, height)
         self.oppenent = RushAI(1,"Light", width, height)
         self.self_ai = RushAI(0,"Light", width, height)
-    
+
     @torch.no_grad()
     def get_sample_actions(self,states, unit_masks):
         states = torch.Tensor(states)
@@ -135,7 +139,6 @@ class Agent:
         actions = torch.stack(action_components)
         masks = torch.cat((unit_masks, torch.Tensor(action_mask_list)), 1)
         log_probs = torch.stack([dist.log_prob(aciton) for dist,aciton in zip(distris,actions)])
-        
         return actions.T.cpu().numpy(), masks.cpu().numpy(),log_probs.T.cpu().numpy(),self_action_bias_mask,action_distris.cpu().numpy()
     
     def sample_env(self, check=False):  
@@ -194,21 +197,14 @@ class Agent:
             return train_exps, step_record_dict
         
         return train_exps
-      
+    
     @torch.no_grad()
     def get_deterministic_actions(self,states, unit_masks):
         states = torch.Tensor(states)
 
-        self_action_bias_mask = np.zeros((self.num_envs, sum(self.action_space)), dtype=np.int32)
-        for i in range(self.num_envs):
-            game:Game = self.env.games[i]
-            action = self.self_ai.get_action(game)
-            self_action_bias_mask[i] = action.action_to_one_hot(width, height)
-
         action_distris = self.net.get_action_distris(states)
-        action_adp_distris = action_distris + torch.Tensor(self_action_bias_mask)*adp_weight
 
-        distris = torch.split(action_adp_distris, self.action_space, dim=1)
+        distris = torch.split(action_distris, self.action_space, dim=1)
         distris = [MaskedCategorical(dist) for dist in distris]
         
         unit_masks = torch.Tensor(unit_masks)
@@ -233,58 +229,6 @@ class Agent:
         while len(outcomes)<100:
             unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
             vector_actions =  self.get_deterministic_actions(self.obs, unit_mask)
-            actions0 = []
-            actions1 = []
-            for i in range(self.num_envs):
-                game:Game = self.env.games[i]
-                vector_action = vector_actions[i]
-                oppe_action = self.oppenent.get_action(self.env.games[i])
-                action = game.vector_to_action(vector_action)
-                actions0.append(action)
-                actions1.append(oppe_action)
-            next_obs, rs, done_n, infos = self.env.step(actions0, actions1)
-
-            rewards.append(np.mean([r[0] for r in rs]))
-            for i in range(self.num_envs):
-                if done_n[i]:
-                    if infos[i] == 0:
-                        outcomes.append(1.0)
-                    else:
-                        outcomes.append(0.0)
-            self.obs=next_obs
-        print("mean_rewards:",np.mean(rewards),"mean_win_rates:",np.mean(outcomes))
-
-    @torch.no_grad()
-    def get_action_without_adp(self,states, unit_masks):
-        states = torch.Tensor(states)
-
-        action_distris = self.net.get_action_distris(states)
-
-        distris = torch.split(action_distris, self.action_space, dim=1)
-        distris = [MaskedCategorical(dist) for dist in distris]
-        
-        unit_masks = torch.Tensor(unit_masks)
-        distris[0].update_masks(unit_masks)
-        
-        units = distris[0].argmax()
-        action_components = [units]
-
-        action_mask_list = self.env.get_action_masks(units.tolist())
-
-        action_masks = torch.split(torch.Tensor(action_mask_list), self.action_space[1:], dim=1) 
-        
-        action_components +=  [dist.update_masks(action_mask).argmax() for dist , action_mask in zip(distris[1:],action_masks)]
-            
-        actions = torch.stack(action_components)
-        
-        return actions.T.cpu().numpy()
-    
-    def check_without_adp(self):
-        rewards = []
-        outcomes = []
-        while len(outcomes)<100:
-            unit_mask = np.array(self.env.get_unit_masks(0)).reshape(self.num_envs, -1)
-            vector_actions =  self.get_action_without_adp(self.obs, unit_mask)
             actions0 = []
             actions1 = []
             for i in range(self.num_envs):
@@ -460,29 +404,34 @@ class Calculator:
             self.share_optim.step()
     
 if __name__ == "__main__":
-    for _ in range(3):
-        comment = "drl_adp_" + str(adp_weight)
-        writer = SummaryWriter(comment=comment)
-        net = ActorCritic()
-        agent = Agent(net)
-        calculator = Calculator(net)
-        MAX_VERSION = 3000
-        REPEAT_TIMES = 10
-   
-        for version in range(MAX_VERSION):
-            samples_list, infos = agent.sample_env(check=True)
-            for (key,value) in infos.items():
-                    writer.add_scalar(key,value,version)
+    adps = [80,10,20,40,4]
+    for i in range(len(adps)):
+        adp_weight = adps[i]
+        for _ in range(3):
+            comment = "drl_adp_" + str(adp_weight)
+            writer = SummaryWriter(comment=comment)
+            net = ActorCritic()
+            agent = Agent(net)
+            calculator = Calculator(net)
+            MAX_VERSION = 3000
+            REPEAT_TIMES = 10
+    
+            for version in range(MAX_VERSION):
+                samples_list, infos = agent.sample_env(check=True)
+                for (key,value) in infos.items():
+                        writer.add_scalar(key,value,version)
 
-            print("version:",version,"reward:",infos["mean_rewards"],"adp_weight:",adp_weight)
+                print("version:",version,"reward:",infos["mean_rewards"],"adp_weight:",adp_weight)
 
-            calculator.begin_batch_train(samples_list)
-            for _ in range(REPEAT_TIMES):
-                calculator.generate_grads()
-            calculator.end_batch_train()
+                calculator.begin_batch_train(samples_list)
+                for _ in range(REPEAT_TIMES):
+                    calculator.generate_grads()
+                calculator.end_batch_train()
 
-            if version % 1000 == 0:
-                torch.save(net.state_dict(), "models\\drl_adp_demo\\model_"+str(version)+".pth")
-                torch.save(net, "models\\drl_adp_demo\\model_"+str(version)+".pkl")
+                if version % 1000 == 0:
+                    torch.save(net.state_dict(), "models\\drl_adp_demo\\"+str(adp_weight)+"\\model_"+str(version)+".pth")
+                    torch.save(net, "models\\drl_adp_demo\\"+str(adp_weight)+"\\model_"+str(version)+".pkl")
+                
+                #adp_weight = max(0.0, adp_weight - 1.0/anneal_time)
             
-            #adp_weight = max(0.0, adp_weight - 1.0/anneal_time)
+            agent.check()
