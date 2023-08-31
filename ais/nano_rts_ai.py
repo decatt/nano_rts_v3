@@ -20,16 +20,6 @@ class AI:
         if len(available_actions) == 0:
             return Action(None, None, None, None)
         return random.choice(available_actions)
-
-class RandomAI(AI):
-    def __init__(self, player_id:int):
-        super().__init__(player_id)
-    
-    def get_action(self, game:Game):
-        available_actions = game.get_player_available_actions(self.player_id)
-        if len(available_actions) == 0:
-            return Action(None, None, None, None)
-        return random.choice(available_actions)
     
 class RandomAI(AI):
     def __init__(self, player_id:int):
@@ -84,6 +74,7 @@ class RushAI(AI):
         self.resources = []
         self.reached_resources = []
         self.obstacles = set()
+
         for unit in list(game.units.values()):
             self.obstacles.add(unit.pos)
             if unit.building_unit_type is not None:
@@ -109,6 +100,12 @@ class RushAI(AI):
                     if distance(resouce, base, game.width) <= game.width-2:
                         self.reached_resources.append(resouce)
                         break
+
+        if len(self.reached_resources)>=0:
+            self.max_harvest_worker = len(self.allay_base)
+        else:
+            self.max_harvest_worker = 0
+
         self.pos_to_build_barracks = []
         self.pos_to_build_base = []
         self.used_resource = 0
@@ -771,6 +768,8 @@ class RoleAI(AI):
 class RushAIPlus(AI):
     def __init__(self, player_id:int, melee_unit_type:str, width:int, height:int):
         super().__init__(player_id)
+        self.width = width
+        self.height = height
         self.random_melee = False
         self.melee_uit_type = "Worker"
         self.max_harvest_worker = 1
@@ -846,6 +845,16 @@ class RushAIPlus(AI):
         if self.random_melee:
             melee_units = ["Heavy", "Light", "Ranged"]
             self.melee_uit_type = random.choice(melee_units)
+
+        if len(self.allay_base) > 0 and len(self.reached_resources) > 0:
+            self.max_harvest_worker = min(len(self.allay_base),2)
+        else:
+            self.max_harvest_worker = 0
+
+        if self.width >= 8:
+            self.num_barracks = len(self.allay_base)
+        else:
+            self.num_barracks = 0
 
     
     def get_random_action(self, game:Game):
